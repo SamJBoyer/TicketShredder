@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -202,9 +203,15 @@ class GitService:
     def open_in_cursor(self, ticket: Ticket) -> None:
         if not ticket.worktree:
             raise CommandError("The ticket does not have a worktree yet.")
+        cursor_exe = shutil.which("cursor")
+        if cursor_exe is None:
+            raise CommandError(
+                "Could not find 'cursor' on PATH. "
+                "Make sure the Cursor CLI is installed and available."
+            )
         try:
             subprocess.Popen(
-                ["cursor", str(ticket.worktree)],
+                [cursor_exe, str(ticket.worktree)],
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except OSError as exc:
