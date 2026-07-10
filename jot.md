@@ -1,0 +1,1 @@
+- When a ticket is closed it should go to the chronology.
