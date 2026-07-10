@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Ticket Shredder",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ticket_shredder",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "CURSOR_API_KEY": "${env:CURSOR_API_KEY}",
+        "TICKET_SHREDDER_MODEL": "${env:TICKET_SHREDDER_MODEL}"
+      },
+      "justMyCode": true
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ticket-shredder"
+version = "0.1.0"
+description = "A Tkinter dashboard for implementing GitHub issues with isolated Cursor agents."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["cursor-sdk"]
+
+[project.scripts]
+ticket-shredder = "ticket_shredder.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["ticket_shredder*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
