@@ -15,7 +15,17 @@ issues labeled `auto` into isolated Cursor agent jobs.
 
 ```powershell
 py -m pip install -e .
-$env:CURSOR_API_KEY = "crsr_..."
+```
+
+Create a `.env` file in the project root:
+
+```env
+CURSOR_API_KEY=crsr_...
+```
+
+Then run:
+
+```powershell
 ticket-shredder
 ```
 

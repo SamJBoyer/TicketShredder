@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A Tkinter dashboard for implementing GitHub issues with isolated Cursor agents."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["cursor-sdk"]
+dependencies = ["cursor-sdk", "python-dotenv"]
 
 [project.scripts]
 ticket-shredder = "ticket_shredder.__main__:main"

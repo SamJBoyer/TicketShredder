@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ class AgentOutcome:
 class CursorAgentRunner:
     def __init__(self, model: str | None = None) -> None:
         self.model = model or os.getenv("TICKET_SHREDDER_MODEL", "composer-2.5")
-        self._active: list[object] = []
+        self._active: list[tuple[asyncio.AbstractEventLoop, object]] = []
         self._active_lock = threading.Lock()
 
     def implement(self, ticket: Ticket) -> AgentOutcome:
@@ -36,8 +37,18 @@ class CursorAgentRunner:
             return AgentOutcome(False, str(exc))
 
     def _prompt(self, ticket: Ticket, worktree: Path) -> object:
+        api_key = os.getenv("CURSOR_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "CURSOR_API_KEY is not set. Add it to .env in the project root."
+            )
+        return asyncio.run(self._prompt_async(ticket, worktree, api_key))
+
+    async def _prompt_async(
+        self, ticket: Ticket, worktree: Path, api_key: str
+    ) -> object:
         try:
-            from cursor_sdk import Agent, LocalAgentOptions
+            from cursor_sdk import AsyncClient, LocalAgentOptions
         except ImportError as exc:
             raise RuntimeError(
                 "Cursor SDK is not installed. Run: python -m pip install -e ."
@@ -58,31 +69,37 @@ Requirements:
 - Do not merge branches, delete this worktree, or modify another checkout.
 - Finish with a concise summary and the checks you ran.
 """
-        option_values: dict[str, object] = {
-            "model": self.model,
-            "local": LocalAgentOptions(cwd=str(worktree)),
-        }
-        api_key = os.getenv("CURSOR_API_KEY")
-        if api_key:
-            option_values["api_key"] = api_key
-        with Agent.create(**option_values) as agent:
-            agent_run = agent.send(prompt)
-            with self._active_lock:
-                self._active.append(agent_run)
-            try:
-                return agent_run.wait()
-            finally:
+        local = LocalAgentOptions(cwd=str(worktree))
+        async with await AsyncClient.launch_bridge(
+            workspace=worktree,
+            local=local,
+        ) as client:
+            async with await client.create_agent(
+                model=self.model,
+                api_key=api_key,
+                local=local,
+            ) as agent:
+                agent_run = await agent.send(prompt)
+                active = (asyncio.get_running_loop(), agent_run)
                 with self._active_lock:
-                    if agent_run in self._active:
-                        self._active.remove(agent_run)
+                    self._active.append(active)
+                try:
+                    return await agent_run.wait()
+                finally:
+                    with self._active_lock:
+                        if active in self._active:
+                            self._active.remove(active)
 
     def cancel_all(self) -> None:
         with self._active_lock:
             active = list(self._active)
-        for agent_run in active:
+        for loop, agent_run in active:
             try:
                 if getattr(agent_run, "supports", lambda _operation: True)("cancel"):
-                    agent_run.cancel()
+                    cancellation = asyncio.run_coroutine_threadsafe(
+                        agent_run.cancel(), loop
+                    )
+                    cancellation.result(timeout=5)
             except Exception:
                 continue
 

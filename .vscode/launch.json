@@ -7,10 +7,6 @@
       "request": "launch",
       "module": "ticket_shredder",
       "cwd": "${workspaceFolder}",
-      "env": {
-        "CURSOR_API_KEY": "${env:CURSOR_API_KEY}",
-        "TICKET_SHREDDER_MODEL": "${env:TICKET_SHREDDER_MODEL}"
-      },
       "justMyCode": true
     }
   ]

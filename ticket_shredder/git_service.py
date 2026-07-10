@@ -4,6 +4,7 @@ import re
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .model import Repository, Ticket
 
@@ -37,14 +38,35 @@ def run(
 
 
 def repository_name(remote_url: str) -> str:
-    value = remote_url.rstrip("/\\")
-    name = re.split(r"[/\\:]", value)[-1]
+    value = remote_url.strip()
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.netloc:
+        name = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    else:
+        name = re.split(r"[/\\:]", value.rstrip("/\\"))[-1]
     if name.endswith(".git"):
         name = name[:-4]
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(".-")
     if not safe:
         raise ValueError("The Git URL does not contain a repository name.")
     return safe
+
+
+def remote_identity(remote_url: str) -> tuple[str, str]:
+    value = remote_url.strip()
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.hostname:
+        host = parsed.hostname
+        path = parsed.path
+    else:
+        scp_style = re.fullmatch(r"(?:[^@/]+@)?([^:/]+):(.+)", value)
+        if not scp_style:
+            return "", value.rstrip("/\\").casefold().removesuffix(".git")
+        host, path = scp_style.groups()
+    return (
+        host.casefold(),
+        path.strip("/\\").casefold().removesuffix(".git"),
+    )
 
 
 class GitService:
@@ -64,7 +86,7 @@ class GitService:
             if not (root / ".git").exists():
                 raise CommandError(f"{root} exists but is not a Git repository.")
             actual_remote = run(["git", "remote", "get-url", "origin"], cwd=root)
-            if actual_remote.casefold() != remote_url.casefold():
+            if remote_identity(actual_remote) != remote_identity(remote_url):
                 raise CommandError(f"{root} is already connected to {actual_remote}.")
             run(["git", "fetch", "--prune", "origin"], cwd=root, timeout=300)
         else:

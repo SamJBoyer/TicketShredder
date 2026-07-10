@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ticket_shredder.git_service import repository_name
+from ticket_shredder.agent_runner import CursorAgentRunner
+from ticket_shredder.git_service import remote_identity, repository_name
 from ticket_shredder.github_service import GitHubService
 from ticket_shredder.model import Repository, Ticket, TicketStatus
 
@@ -23,6 +25,27 @@ class RepositoryNameTests(unittest.TestCase):
     def test_empty_name_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             repository_name("https://github.com/")
+
+    def test_remote_identity_ignores_git_suffix_and_trailing_slash(self) -> None:
+        self.assertEqual(
+            remote_identity("https://github.com/acme/widgets.git"),
+            remote_identity("https://github.com/acme/widgets/"),
+        )
+
+    def test_remote_identity_matches_ssh_and_https(self) -> None:
+        self.assertEqual(
+            remote_identity("git@github.com:acme/widgets.git"),
+            remote_identity("https://github.com/acme/widgets"),
+        )
+
+
+class CursorAgentRunnerTests(unittest.TestCase):
+    def test_missing_api_key_is_reported_before_agent_launch(self) -> None:
+        ticket = Ticket(1, "Test", "", "https://example.test/1")
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {"CURSOR_API_KEY": ""}):
+                with self.assertRaisesRegex(RuntimeError, "CURSOR_API_KEY is not set"):
+                    CursorAgentRunner()._prompt(ticket, Path(directory))
 
 
 class GitHubServiceTests(unittest.TestCase):
