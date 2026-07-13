@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 from .model import Repository, Ticket
 
+AGENT_BRANCH = "agents"
+
 
 class CommandError(RuntimeError):
     pass
@@ -93,36 +95,39 @@ class GitService:
         else:
             run(["git", "clone", remote_url, str(root)], timeout=600)
         self._exclude_runtime_files(root)
-        self._checkout_dev(root)
+        self._checkout_agents(root)
         return Repository(remote_url=remote_url, root=root)
 
-    def _checkout_dev(self, root: Path) -> None:
-        local = run(["git", "branch", "--list", "dev"], cwd=root)
+    def _checkout_agents(self, root: Path) -> None:
+        local = run(["git", "branch", "--list", AGENT_BRANCH], cwd=root)
         if local:
-            run(["git", "checkout", "dev"], cwd=root)
-            self._merge_remote_dev(root)
+            run(["git", "checkout", AGENT_BRANCH], cwd=root)
+            self._merge_remote_agents(root)
             return
-        remote = run(["git", "branch", "--remotes", "--list", "origin/dev"], cwd=root)
+        remote = run(
+            ["git", "branch", "--remotes", "--list", f"origin/{AGENT_BRANCH}"],
+            cwd=root,
+        )
         if remote:
-            run(["git", "checkout", "--track", "origin/dev"], cwd=root)
+            run(["git", "checkout", "--track", f"origin/{AGENT_BRANCH}"], cwd=root)
             return
-        run(["git", "checkout", "-b", "dev"], cwd=root)
+        run(["git", "checkout", "-b", AGENT_BRANCH], cwd=root)
 
     @staticmethod
-    def _merge_remote_dev(root: Path) -> None:
-        """Bring local dev up to date with origin/dev.
+    def _merge_remote_agents(root: Path) -> None:
+        """Bring local agents up to date with origin/agents.
 
         Fast-forward when possible; otherwise create a merge commit. The managed
         clone can diverge when ticket merges land locally before a push (or when
         the remote moves independently), and --ff-only rejects that case.
         """
         remote = run(
-            ["git", "branch", "--remotes", "--list", "origin/dev"],
+            ["git", "branch", "--remotes", "--list", f"origin/{AGENT_BRANCH}"],
             cwd=root,
         )
         if not remote:
             return
-        run(["git", "merge", "--no-edit", "origin/dev"], cwd=root)
+        run(["git", "merge", "--no-edit", f"origin/{AGENT_BRANCH}"], cwd=root)
 
     @staticmethod
     def _exclude_runtime_files(root: Path) -> None:
@@ -166,7 +171,7 @@ class GitService:
         if existing_branch:
             command.extend([str(worktree), branch])
         else:
-            command.extend(["-b", branch, str(worktree), "dev"])
+            command.extend(["-b", branch, str(worktree), AGENT_BRANCH])
         run(command, cwd=repository.root)
         return branch, worktree
 
@@ -177,7 +182,7 @@ class GitService:
         if run(["git", "status", "--porcelain"], cwd=ticket.worktree):
             return False
         ahead = run(
-            ["git", "rev-list", "--count", "dev..HEAD"],
+            ["git", "rev-list", "--count", f"{AGENT_BRANCH}..HEAD"],
             cwd=ticket.worktree,
         )
         return int(ahead) > 0
@@ -186,16 +191,16 @@ class GitService:
         if not ticket.branch or not ticket.worktree:
             raise CommandError("This ticket has no worktree to merge.")
         if run(["git", "status", "--porcelain"], cwd=repository.root):
-            raise CommandError("The dev checkout has uncommitted changes.")
-        run(["git", "checkout", "dev"], cwd=repository.root)
+            raise CommandError("The agents checkout has uncommitted changes.")
+        run(["git", "checkout", AGENT_BRANCH], cwd=repository.root)
         run(["git", "fetch", "--prune", "origin"], cwd=repository.root, timeout=300)
-        self._merge_remote_dev(repository.root)
+        self._merge_remote_agents(repository.root)
         run(["git", "merge", "--no-ff", "--no-edit", ticket.branch], cwd=repository.root)
-        run(["git", "push", "origin", "dev"], cwd=repository.root, timeout=300)
+        run(["git", "push", "origin", AGENT_BRANCH], cwd=repository.root, timeout=300)
         try:
             self._remove_worktree(repository, ticket)
         except CommandError as exc:
-            return f"Merged into dev; cleanup needs attention: {exc}"
+            return f"Merged into {AGENT_BRANCH}; cleanup needs attention: {exc}"
         return None
 
     def dump(self, repository: Repository, ticket: Ticket) -> None:

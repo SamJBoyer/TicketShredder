@@ -17,7 +17,7 @@ def _git(args: list[str], cwd: Path) -> str:
     return run(["git", *args], cwd=cwd)
 
 
-def _init_repo(path: Path, *, branch: str = "dev") -> None:
+def _init_repo(path: Path, *, branch: str = "agents") -> None:
     path.mkdir(parents=True)
     _git(["init", "-b", branch], cwd=path)
     _git(["config", "user.email", "test@example.com"], cwd=path)
@@ -138,11 +138,11 @@ class GitHubServiceTests(unittest.TestCase):
 
 
 class GitServiceCheckoutTests(unittest.TestCase):
-    def test_checkout_dev_merges_when_local_and_origin_diverged(self) -> None:
+    def test_checkout_agents_merges_when_local_and_origin_diverged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             remote = base / "remote.git"
-            run(["git", "init", "--bare", "-b", "dev", str(remote)])
+            run(["git", "init", "--bare", "-b", "agents", str(remote)])
 
             seed = base / "seed"
             _init_repo(seed)
@@ -150,10 +150,10 @@ class GitServiceCheckoutTests(unittest.TestCase):
             _git(["add", "README.md"], cwd=seed)
             _git(["commit", "-m", "base"], cwd=seed)
             _git(["remote", "add", "origin", str(remote)], cwd=seed)
-            _git(["push", "-u", "origin", "dev"], cwd=seed)
+            _git(["push", "-u", "origin", "agents"], cwd=seed)
 
             clone = base / "repos" / "widgets"
-            run(["git", "clone", "--branch", "dev", str(remote), str(clone)])
+            run(["git", "clone", "--branch", "agents", str(remote), str(clone)])
             _git(["config", "user.email", "test@example.com"], cwd=clone)
             _git(["config", "user.name", "Test"], cwd=clone)
 
@@ -164,24 +164,24 @@ class GitServiceCheckoutTests(unittest.TestCase):
 
             # Divergent remote commit.
             other = base / "other"
-            run(["git", "clone", "--branch", "dev", str(remote), str(other)])
+            run(["git", "clone", "--branch", "agents", str(remote), str(other)])
             _git(["config", "user.email", "test@example.com"], cwd=other)
             _git(["config", "user.name", "Test"], cwd=other)
             (other / "remote.txt").write_text("remote\n", encoding="utf-8")
             _git(["add", "remote.txt"], cwd=other)
             _git(["commit", "-m", "remote-only"], cwd=other)
-            _git(["push", "origin", "dev"], cwd=other)
+            _git(["push", "origin", "agents"], cwd=other)
 
             service = GitService(base)
             run(["git", "fetch", "--prune", "origin"], cwd=clone)
-            service._checkout_dev(clone)
+            service._checkout_agents(clone)
 
-            self.assertEqual(_git(["branch", "--show-current"], cwd=clone), "dev")
+            self.assertEqual(_git(["branch", "--show-current"], cwd=clone), "agents")
             files = {path.name for path in clone.iterdir() if path.is_file()}
             self.assertIn("local.txt", files)
             self.assertIn("remote.txt", files)
-            # Merge must have integrated origin/dev (no longer behind).
-            behind = _git(["rev-list", "--count", "HEAD..origin/dev"], cwd=clone)
+            # Merge must have integrated origin/agents (no longer behind).
+            behind = _git(["rev-list", "--count", "HEAD..origin/agents"], cwd=clone)
             self.assertEqual(behind, "0")
 
 

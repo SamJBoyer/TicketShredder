@@ -18,7 +18,7 @@ class AgentOutcome:
 
 class CursorAgentRunner:
     def __init__(self, model: str | None = None) -> None:
-        self.model = model or os.getenv("TICKET_SHREDDER_MODEL", "composer-2.5")
+        self.model = model or os.getenv("TICKET_SHREDDER_MODEL", "auto")
         self._active: list[tuple[asyncio.AbstractEventLoop, object]] = []
         self._active_lock = threading.Lock()
 
@@ -114,7 +114,7 @@ Requirements:
                 cwd=ticket.worktree,
             )
         ahead = run(
-            ["git", "rev-list", "--count", "dev..HEAD"],
+            ["git", "rev-list", "--count", "agents..HEAD"],
             cwd=ticket.worktree,
         )
         if int(ahead) == 0:

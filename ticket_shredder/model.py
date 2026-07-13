@@ -34,5 +34,5 @@ class Ticket:
 class Repository:
     remote_url: str
     root: Path
-    default_branch: str = "dev"
+    default_branch: str = "agents"
     tickets: list[Ticket] = field(default_factory=list)

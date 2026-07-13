@@ -81,7 +81,7 @@ class TicketController:
         with self.git_lock:
             warning = self.git.merge(repository, ticket)
         ticket.status = TicketStatus.MERGED
-        ticket.detail = warning or "Merged into dev."
+        ticket.detail = warning or "Merged into agents."
         if not warning:
             ticket.worktree = None
             ticket.branch = None
@@ -95,7 +95,7 @@ class TicketController:
         ticket.branch = None
         if previous_status == TicketStatus.MERGED:
             ticket.status = TicketStatus.MERGED
-            ticket.detail = "Merged into dev; leftover worktree cleaned up."
+            ticket.detail = "Merged into agents; leftover worktree cleaned up."
             self.github.save_state(repository.root, ticket)
         else:
             ticket.status = TicketStatus.QUEUED
