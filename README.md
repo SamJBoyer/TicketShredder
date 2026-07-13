@@ -45,8 +45,14 @@ worktree. Failed tickets remain available to dump and retry on the next launch.
 Set `TICKET_SHREDDER_MODEL` to choose another Cursor model. The default is
 `composer-2.5`.
 
+## Layout
+
+- `src/ticket_shredder/` — application source
+- `tests/` — unit tests
+
 ## Tests
 
 ```powershell
+$env:PYTHONPATH = "src"
 py -m unittest discover -s tests -v
 ```

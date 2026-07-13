@@ -14,7 +14,9 @@ dependencies = ["cursor-sdk", "python-dotenv"]
 ticket-shredder = "ticket_shredder.__main__:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["ticket_shredder*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
