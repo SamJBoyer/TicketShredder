@@ -100,18 +100,29 @@ class GitService:
         local = run(["git", "branch", "--list", "dev"], cwd=root)
         if local:
             run(["git", "checkout", "dev"], cwd=root)
-            remote = run(
-                ["git", "branch", "--remotes", "--list", "origin/dev"],
-                cwd=root,
-            )
-            if remote:
-                run(["git", "merge", "--ff-only", "origin/dev"], cwd=root)
+            self._merge_remote_dev(root)
             return
         remote = run(["git", "branch", "--remotes", "--list", "origin/dev"], cwd=root)
         if remote:
             run(["git", "checkout", "--track", "origin/dev"], cwd=root)
             return
         run(["git", "checkout", "-b", "dev"], cwd=root)
+
+    @staticmethod
+    def _merge_remote_dev(root: Path) -> None:
+        """Bring local dev up to date with origin/dev.
+
+        Fast-forward when possible; otherwise create a merge commit. The managed
+        clone can diverge when ticket merges land locally before a push (or when
+        the remote moves independently), and --ff-only rejects that case.
+        """
+        remote = run(
+            ["git", "branch", "--remotes", "--list", "origin/dev"],
+            cwd=root,
+        )
+        if not remote:
+            return
+        run(["git", "merge", "--no-edit", "origin/dev"], cwd=root)
 
     @staticmethod
     def _exclude_runtime_files(root: Path) -> None:
@@ -173,6 +184,8 @@ class GitService:
         if run(["git", "status", "--porcelain"], cwd=repository.root):
             raise CommandError("The dev checkout has uncommitted changes.")
         run(["git", "checkout", "dev"], cwd=repository.root)
+        run(["git", "fetch", "--prune", "origin"], cwd=repository.root, timeout=300)
+        self._merge_remote_dev(repository.root)
         run(["git", "merge", "--no-ff", "--no-edit", ticket.branch], cwd=repository.root)
         run(["git", "push", "origin", "dev"], cwd=repository.root, timeout=300)
         try:

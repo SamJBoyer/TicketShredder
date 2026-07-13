@@ -16,5 +16,6 @@ Wants:
     - each ticket should have 2 buttons. one called merge and the other called dump. merge button merges the worktree to the dev branch, dump deletes the work tree and branch 
 - a harness that tells the ai to implement this change and return success or failure.
 
+- failed to delete-permission denied
 - a harness system that connects the issue to ai 
 - to merge things back into the src folder

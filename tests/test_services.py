@@ -8,9 +8,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ticket_shredder.agent_runner import CursorAgentRunner
-from ticket_shredder.git_service import remote_identity, repository_name
+from ticket_shredder.git_service import GitService, remote_identity, repository_name, run
 from ticket_shredder.github_service import GitHubService
 from ticket_shredder.model import Repository, Ticket, TicketStatus
+
+
+def _git(args: list[str], cwd: Path) -> str:
+    return run(["git", *args], cwd=cwd)
+
+
+def _init_repo(path: Path, *, branch: str = "dev") -> None:
+    path.mkdir(parents=True)
+    _git(["init", "-b", branch], cwd=path)
+    _git(["config", "user.email", "test@example.com"], cwd=path)
+    _git(["config", "user.name", "Test"], cwd=path)
 
 
 class RepositoryNameTests(unittest.TestCase):
@@ -124,6 +135,54 @@ class GitHubServiceTests(unittest.TestCase):
             self.assertEqual(restored.status, TicketStatus.REVIEW)
             self.assertEqual(restored.branch, "ticket-shredder/issue-7")
             self.assertEqual(restored.worktree, worktree)
+
+
+class GitServiceCheckoutTests(unittest.TestCase):
+    def test_checkout_dev_merges_when_local_and_origin_diverged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            remote = base / "remote.git"
+            run(["git", "init", "--bare", "-b", "dev", str(remote)])
+
+            seed = base / "seed"
+            _init_repo(seed)
+            (seed / "README.md").write_text("base\n", encoding="utf-8")
+            _git(["add", "README.md"], cwd=seed)
+            _git(["commit", "-m", "base"], cwd=seed)
+            _git(["remote", "add", "origin", str(remote)], cwd=seed)
+            _git(["push", "-u", "origin", "dev"], cwd=seed)
+
+            clone = base / "repos" / "widgets"
+            run(["git", "clone", "--branch", "dev", str(remote), str(clone)])
+            _git(["config", "user.email", "test@example.com"], cwd=clone)
+            _git(["config", "user.name", "Test"], cwd=clone)
+
+            # Divergent local commit (simulates a ticket merge that never pushed).
+            (clone / "local.txt").write_text("local\n", encoding="utf-8")
+            _git(["add", "local.txt"], cwd=clone)
+            _git(["commit", "-m", "local-only"], cwd=clone)
+
+            # Divergent remote commit.
+            other = base / "other"
+            run(["git", "clone", "--branch", "dev", str(remote), str(other)])
+            _git(["config", "user.email", "test@example.com"], cwd=other)
+            _git(["config", "user.name", "Test"], cwd=other)
+            (other / "remote.txt").write_text("remote\n", encoding="utf-8")
+            _git(["add", "remote.txt"], cwd=other)
+            _git(["commit", "-m", "remote-only"], cwd=other)
+            _git(["push", "origin", "dev"], cwd=other)
+
+            service = GitService(base)
+            run(["git", "fetch", "--prune", "origin"], cwd=clone)
+            service._checkout_dev(clone)
+
+            self.assertEqual(_git(["branch", "--show-current"], cwd=clone), "dev")
+            files = {path.name for path in clone.iterdir() if path.is_file()}
+            self.assertIn("local.txt", files)
+            self.assertIn("remote.txt", files)
+            # Merge must have integrated origin/dev (no longer behind).
+            behind = _git(["rev-list", "--count", "HEAD..origin/dev"], cwd=clone)
+            self.assertEqual(behind, "0")
 
 
 if __name__ == "__main__":
