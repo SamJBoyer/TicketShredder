@@ -29,6 +29,8 @@ hVersion: Generally means version of helmsman that was used in this project, or 
 todos: questions that are turned into things to do. marked with the todo tag on git issues
 
 auto: items that can be implemented automatically by the agent on a worktree
+
+bug: something isn't working as expected
  
 ---
 
