@@ -102,6 +102,22 @@ class TicketController:
             ticket.detail = "Discarded. Ready to retry."
             self.github.clear_state(repository.root, ticket)
 
+    def close(self, repository: Repository, ticket: Ticket) -> None:
+        if ticket.status == TicketStatus.WORKING:
+            raise RuntimeError(
+                f"Ticket #{ticket.number} is still being worked on."
+            )
+        if ticket.worktree:
+            with self.git_lock:
+                self.git.dump(repository, ticket)
+            ticket.worktree = None
+            ticket.branch = None
+        self.github.close_issue(repository, ticket)
+        self.github.remove_cache(repository.root, ticket)
+        repository.tickets = [
+            item for item in repository.tickets if item.number != ticket.number
+        ]
+
     def shutdown(self) -> None:
         self.agents.cancel_all()
         self.executor.shutdown(wait=False, cancel_futures=True)

@@ -39,6 +39,19 @@ class GitHubService:
         repository.tickets = tickets
         return tickets
 
+    def close_issue(self, repository: Repository, ticket: Ticket) -> None:
+        run(
+            ["gh", "issue", "close", str(ticket.number)],
+            cwd=repository.root,
+            timeout=60,
+        )
+
+    @staticmethod
+    def remove_cache(root: Path, ticket: Ticket) -> None:
+        cache = root / ".scratch" / ".itickets" / "auto"
+        (cache / ticket.cache_name).unlink(missing_ok=True)
+        (cache / f"{ticket.number}.status.json").unlink(missing_ok=True)
+
     @staticmethod
     def _ticket_from_json(item: dict[str, object]) -> Ticket:
         labels = tuple(
