@@ -58,6 +58,20 @@ class CursorAgentRunnerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "CURSOR_API_KEY is not set"):
                     CursorAgentRunner()._prompt(ticket, Path(directory))
 
+    def test_prompt_asks_for_finish_git_branch_description(self) -> None:
+        ticket = Ticket(
+            7,
+            "Finish git description",
+            "Write what you did.",
+            "https://example.test/7",
+        )
+        prompt = CursorAgentRunner.build_prompt(ticket)
+        self.assertIn("Implement GitHub issue #7", prompt)
+        self.assertIn("Finish git description", prompt)
+        self.assertIn("Write what you did.", prompt)
+        self.assertIn("git branch description", prompt)
+        self.assertIn("branch.<name>.description", prompt)
+
 
 class GitHubServiceTests(unittest.TestCase):
     def test_sync_parses_and_caches_auto_tickets(self) -> None:

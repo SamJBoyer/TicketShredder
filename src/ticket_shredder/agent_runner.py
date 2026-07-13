@@ -44,17 +44,9 @@ class CursorAgentRunner:
             )
         return asyncio.run(self._prompt_async(ticket, worktree, api_key))
 
-    async def _prompt_async(
-        self, ticket: Ticket, worktree: Path, api_key: str
-    ) -> object:
-        try:
-            from cursor_sdk import AsyncClient, LocalAgentOptions
-        except ImportError as exc:
-            raise RuntimeError(
-                "Cursor SDK is not installed. Run: python -m pip install -e ."
-            ) from exc
-
-        prompt = f"""Implement GitHub issue #{ticket.number} in this worktree.
+    @staticmethod
+    def build_prompt(ticket: Ticket) -> str:
+        return f"""Implement GitHub issue #{ticket.number} in this worktree.
 
 Title: {ticket.title}
 
@@ -67,8 +59,21 @@ Requirements:
 - Add or update focused tests when the repository has a test system.
 - Run the relevant checks and fix failures caused by your work.
 - Do not merge branches, delete this worktree, or modify another checkout.
+- When you finish, write a descriptive git branch description on this worktree summarizing what you did (git config branch.<name>.description "...").
 - Finish with a concise summary and the checks you ran.
 """
+
+    async def _prompt_async(
+        self, ticket: Ticket, worktree: Path, api_key: str
+    ) -> object:
+        try:
+            from cursor_sdk import AsyncClient, LocalAgentOptions
+        except ImportError as exc:
+            raise RuntimeError(
+                "Cursor SDK is not installed. Run: python -m pip install -e ."
+            ) from exc
+
+        prompt = self.build_prompt(ticket)
         local = LocalAgentOptions(cwd=str(worktree))
         async with await AsyncClient.launch_bridge(
             workspace=worktree,
