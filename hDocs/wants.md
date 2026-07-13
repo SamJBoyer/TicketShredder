@@ -17,3 +17,4 @@ Wants:
 - a harness that tells the ai to implement this change and return success or failure.
 
 - a harness system that connects the issue to ai 
+- to merge things back into the src folder
