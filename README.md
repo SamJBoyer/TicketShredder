@@ -29,6 +29,12 @@ Then run:
 ticket-shredder
 ```
 
+To add a Desktop shortcut that launches Ticket Shredder (no console window):
+
+```powershell
+ticket-shredder-desktop
+```
+
 Paste a Git remote URL and select **Connect**. Ticket Shredder then:
 
 1. validates and clones the repository under `~/.ticket-shredder/repos`;

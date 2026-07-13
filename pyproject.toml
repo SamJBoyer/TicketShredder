@@ -12,6 +12,7 @@ dependencies = ["cursor-sdk", "python-dotenv"]
 
 [project.scripts]
 ticket-shredder = "ticket_shredder.__main__:main"
+ticket-shredder-desktop = "ticket_shredder.desktop:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
