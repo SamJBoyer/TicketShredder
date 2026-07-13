@@ -174,6 +174,7 @@ class GitService:
             raise CommandError("The dev checkout has uncommitted changes.")
         run(["git", "checkout", "dev"], cwd=repository.root)
         run(["git", "merge", "--no-ff", "--no-edit", ticket.branch], cwd=repository.root)
+        run(["git", "push", "origin", "dev"], cwd=repository.root, timeout=300)
         try:
             self._remove_worktree(repository, ticket)
         except CommandError as exc:
