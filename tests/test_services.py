@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ticket_shredder.agent_runner import CursorAgentRunner
+from ticket_shredder.controller import TicketController
 from ticket_shredder.git_service import GitService, remote_identity, repository_name, run
 from ticket_shredder.github_service import GitHubService
 from ticket_shredder.model import Repository, Ticket, TicketStatus
@@ -149,6 +150,97 @@ class GitHubServiceTests(unittest.TestCase):
             self.assertEqual(restored.status, TicketStatus.REVIEW)
             self.assertEqual(restored.branch, "ticket-shredder/issue-7")
             self.assertEqual(restored.worktree, worktree)
+
+    def test_close_issue_invokes_gh(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = Repository("remote", root)
+            ticket = Ticket(
+                6,
+                "Close me",
+                "",
+                "https://example.test/6",
+            )
+            with patch("ticket_shredder.github_service.run") as mocked:
+                GitHubService().close_issue(repository, ticket)
+            mocked.assert_called_once_with(
+                ["gh", "issue", "close", "6"],
+                cwd=root,
+                timeout=60,
+            )
+
+    def test_remove_cache_deletes_ticket_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / ".scratch" / ".itickets" / "auto"
+            cache.mkdir(parents=True)
+            (cache / "6.md").write_text("cached", encoding="utf-8")
+            (cache / "6.status.json").write_text("{}", encoding="utf-8")
+            (cache / "7.md").write_text("keep", encoding="utf-8")
+            ticket = Ticket(6, "Close me", "", "https://example.test/6")
+
+            GitHubService.remove_cache(root, ticket)
+
+            self.assertFalse((cache / "6.md").exists())
+            self.assertFalse((cache / "6.status.json").exists())
+            self.assertTrue((cache / "7.md").exists())
+
+
+class TicketControllerCloseTests(unittest.TestCase):
+    def test_close_removes_cache_worktree_and_ticket(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            worktree = root / "worktree"
+            worktree.mkdir()
+            cache = root / ".scratch" / ".itickets" / "auto"
+            cache.mkdir(parents=True)
+            (cache / "6.md").write_text("cached", encoding="utf-8")
+            (cache / "6.status.json").write_text("{}", encoding="utf-8")
+            ticket = Ticket(
+                6,
+                "Close me",
+                "",
+                "https://example.test/6",
+                status=TicketStatus.MERGED,
+                branch="ticket-shredder/issue-6",
+                worktree=worktree,
+                detail="Merged",
+            )
+            other = Ticket(7, "Keep me", "", "https://example.test/7")
+            repository = Repository("remote", root, tickets=[ticket, other])
+            controller = TicketController(root)
+            try:
+                with patch.object(controller.git, "dump") as dump:
+                    with patch.object(controller.github, "close_issue") as close_issue:
+                        controller.close(repository, ticket)
+
+                dump.assert_called_once_with(repository, ticket)
+                close_issue.assert_called_once_with(repository, ticket)
+                self.assertIsNone(ticket.worktree)
+                self.assertIsNone(ticket.branch)
+                self.assertEqual(repository.tickets, [other])
+                self.assertFalse((cache / "6.md").exists())
+                self.assertFalse((cache / "6.status.json").exists())
+            finally:
+                controller.shutdown()
+
+    def test_close_rejects_working_tickets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ticket = Ticket(
+                6,
+                "Busy",
+                "",
+                "https://example.test/6",
+                status=TicketStatus.WORKING,
+            )
+            repository = Repository("remote", root, tickets=[ticket])
+            controller = TicketController(root)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "still being worked"):
+                    controller.close(repository, ticket)
+            finally:
+                controller.shutdown()
 
 
 class GitServiceCheckoutTests(unittest.TestCase):

@@ -29,6 +29,7 @@ class TicketCard(ttk.Frame):
         on_open: Callable[[Ticket], None],
         on_merge: Callable[[Ticket], None],
         on_dump: Callable[[Ticket], None],
+        on_close: Callable[[Ticket], None],
     ) -> None:
         super().__init__(parent, padding=12, relief="solid", borderwidth=1)
         self.ticket = ticket
@@ -62,7 +63,11 @@ class TicketCard(ttk.Frame):
         self.dump_button = ttk.Button(
             actions, text="Dump", command=lambda: on_dump(ticket)
         )
-        self.dump_button.pack(side="left")
+        self.dump_button.pack(side="left", padx=(0, 6))
+        self.close_button = ttk.Button(
+            actions, text="Close", command=lambda: on_close(ticket)
+        )
+        self.close_button.pack(side="left")
         self.refresh()
 
     def refresh(self) -> None:
@@ -82,10 +87,18 @@ class TicketCard(ttk.Frame):
         )
         can_dump = self.ticket.worktree and self.ticket.status != TicketStatus.WORKING
         self.dump_button.configure(state="normal" if can_dump else "disabled")
+        self.close_button.configure(
+            state=(
+                "disabled"
+                if self.ticket.status == TicketStatus.WORKING
+                else "normal"
+            )
+        )
 
     def set_busy(self) -> None:
         self.merge_button.configure(state="disabled")
         self.dump_button.configure(state="disabled")
+        self.close_button.configure(state="disabled")
 
 
 class TicketShredderApp(tk.Tk):
@@ -198,6 +211,9 @@ class TicketShredderApp(tk.Tk):
                 on_open=self._open,
                 on_merge=lambda selected, repo=repository: self._merge(repo, selected),
                 on_dump=lambda selected, repo=repository: self._dump(repo, selected),
+                on_close=lambda selected, repo=repository: self._close_ticket(
+                    repo, selected
+                ),
             )
             card.pack(fill="x", pady=(0, 10))
             self.cards[ticket.number] = card
@@ -209,6 +225,19 @@ class TicketShredderApp(tk.Tk):
         card = self.cards.get(ticket.number)
         if card:
             card.refresh()
+
+    def _remove_ticket(self, ticket: Ticket) -> None:
+        card = self.cards.pop(ticket.number, None)
+        if card is not None:
+            card.destroy()
+        if self.repository is not None and not self.repository.tickets:
+            for child in self.list_frame.winfo_children():
+                child.destroy()
+            ttk.Label(
+                self.list_frame,
+                text="No open issues labeled “auto”.",
+                padding=24,
+            ).pack()
 
     def _open(self, ticket: Ticket) -> None:
         try:
@@ -238,6 +267,23 @@ class TicketShredderApp(tk.Tk):
             "Dump failed",
         )
 
+    def _close_ticket(self, repository: Repository, ticket: Ticket) -> None:
+        if not messagebox.askyesno(
+            "Close issue",
+            f"Close GitHub issue #{ticket.number} and remove it from Ticket Shredder?",
+            parent=self,
+        ):
+            return
+        card = self.cards.get(ticket.number)
+        if card and card.ticket is ticket:
+            card.set_busy()
+        future = self.controller.executor.submit(
+            self.controller.close, repository, ticket
+        )
+        future.add_done_callback(
+            lambda result: self.events.put(("closed", ticket, result))
+        )
+
     def _submit_action(
         self,
         repository: Repository,
@@ -261,6 +307,15 @@ class TicketShredderApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror(title, str(exc), parent=self)
         self._refresh(ticket)
+
+    def _closed_finished(self, ticket: Ticket, future: Future[None]) -> None:
+        try:
+            future.result()
+        except Exception as exc:
+            messagebox.showerror("Close failed", str(exc), parent=self)
+            self._refresh(ticket)
+            return
+        self._remove_ticket(ticket)
 
     def _set_repo_lamp(self, color: str) -> None:
         self.repo_lamp.delete("all")
@@ -286,6 +341,11 @@ class TicketShredderApp(tk.Tk):
                     cast(Ticket, event[1]),
                     cast(Future[None], event[2]),
                     cast(str, event[3]),
+                )
+            elif kind == "closed":
+                self._closed_finished(
+                    cast(Ticket, event[1]),
+                    cast(Future[None], event[2]),
                 )
         self.after(50, self._drain_events)
 
