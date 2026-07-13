@@ -132,13 +132,17 @@ class GitService:
             exclude = root / exclude
         exclude.parent.mkdir(parents=True, exist_ok=True)
         content = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-        pattern = ".scratch/.itickets/auto/"
-        if pattern not in content.splitlines():
-            separator = "" if not content or content.endswith("\n") else "\n"
-            exclude.write_text(
-                f"{content}{separator}{pattern}\n",
-                encoding="utf-8",
-            )
+        pattern = ".scratch/"
+        lines = content.splitlines()
+        if pattern in lines:
+            return
+        # Drop the older, narrower exclude if present.
+        lines = [line for line in lines if line != ".scratch/.itickets/auto/"]
+        body = "\n".join(lines)
+        separator = "" if not body or body.endswith("\n") else "\n"
+        if body:
+            body = f"{body}{separator}"
+        exclude.write_text(f"{body}{pattern}\n", encoding="utf-8")
 
     def create_worktree(self, repository: Repository, ticket: Ticket) -> tuple[str, Path]:
         branch = f"ticket-shredder/issue-{ticket.number}"
