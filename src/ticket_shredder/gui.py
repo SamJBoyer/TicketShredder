@@ -20,6 +20,9 @@ STATUS_COLORS = {
     TicketStatus.FAILED: "#ea4335",
 }
 
+# How often to re-check GitHub for newly labeled ``auto`` issues after connect.
+POLL_INTERVAL_MS = 30_000
+
 
 class TicketCard(ttk.Frame):
     def __init__(
@@ -112,6 +115,8 @@ class TicketShredderApp(tk.Tk):
         self.cards: dict[int, TicketCard] = {}
         self.repository: Repository | None = None
         self.events: queue.Queue[tuple[object, ...]] = queue.Queue()
+        self._poll_job: str | None = None
+        self._poll_generation = 0
         self._build()
         self.after(50, self._drain_events)
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -164,6 +169,7 @@ class TicketShredderApp(tk.Tk):
         if not remote_url:
             self._set_repo_lamp("#ea4335")
             return
+        self._stop_polling()
         self.connect_button.configure(state="disabled")
         self.entry.configure(state="disabled")
         for card in self.cards.values():
@@ -184,13 +190,14 @@ class TicketShredderApp(tk.Tk):
             for card in self.cards.values():
                 card.refresh()
             messagebox.showerror("Repository unavailable", str(exc), parent=self)
+            if self.repository is not None:
+                self._start_polling()
             return
         self._set_repo_lamp("#34a853")
         self.repository = repository
         self._render(repository)
-        for ticket in repository.tickets:
-            if ticket.status in {TicketStatus.QUEUED, TicketStatus.FAILED}:
-                self.controller.start(repository, ticket, self._queue_refresh)
+        self._start_tickets(repository, repository.tickets)
+        self._start_polling()
 
     def _render(self, repository: Repository) -> None:
         for child in self.list_frame.winfo_children():
@@ -204,18 +211,77 @@ class TicketShredderApp(tk.Tk):
             ).pack()
             return
         for ticket in repository.tickets:
-            card = TicketCard(
-                self.list_frame,
-                ticket,
-                on_open=self._open,
-                on_merge=lambda selected, repo=repository: self._merge(repo, selected),
-                on_dump=lambda selected, repo=repository: self._dump(repo, selected),
-                on_close=lambda selected, repo=repository: self._close_ticket(
-                    repo, selected
-                ),
-            )
-            card.pack(fill="x", pady=(0, 10))
-            self.cards[ticket.number] = card
+            self._pack_card(repository, ticket)
+
+    def _append_tickets(
+        self, repository: Repository, tickets: list[Ticket]
+    ) -> None:
+        if not tickets:
+            return
+        if not self.cards:
+            for child in self.list_frame.winfo_children():
+                child.destroy()
+        for ticket in tickets:
+            if ticket.number in self.cards:
+                continue
+            self._pack_card(repository, ticket)
+        self._start_tickets(repository, tickets)
+
+    def _pack_card(self, repository: Repository, ticket: Ticket) -> None:
+        card = TicketCard(
+            self.list_frame,
+            ticket,
+            on_open=self._open,
+            on_merge=lambda selected, repo=repository: self._merge(repo, selected),
+            on_dump=lambda selected, repo=repository: self._dump(repo, selected),
+            on_close=lambda selected, repo=repository: self._close_ticket(
+                repo, selected
+            ),
+        )
+        card.pack(fill="x", pady=(0, 10))
+        self.cards[ticket.number] = card
+
+    def _start_tickets(self, repository: Repository, tickets: list[Ticket]) -> None:
+        for ticket in tickets:
+            if ticket.status in {TicketStatus.QUEUED, TicketStatus.FAILED}:
+                self.controller.start(repository, ticket, self._queue_refresh)
+
+    def _start_polling(self) -> None:
+        self._stop_polling()
+        self._poll_generation += 1
+        self._schedule_poll()
+
+    def _stop_polling(self) -> None:
+        if self._poll_job is not None:
+            self.after_cancel(self._poll_job)
+            self._poll_job = None
+
+    def _schedule_poll(self) -> None:
+        self._poll_job = self.after(POLL_INTERVAL_MS, self._poll_tick)
+
+    def _poll_tick(self) -> None:
+        self._poll_job = None
+        repository = self.repository
+        if repository is None:
+            return
+        generation = self._poll_generation
+        future = self.controller.executor.submit(self.controller.poll, repository)
+        future.add_done_callback(
+            lambda result: self.events.put(("polled", generation, result))
+        )
+        self._schedule_poll()
+
+    def _polled(
+        self, generation: int, future: Future[list[Ticket]]
+    ) -> None:
+        if generation != self._poll_generation or self.repository is None:
+            return
+        try:
+            new_tickets = future.result()
+        except Exception:
+            # Transient GitHub / network errors should not interrupt the session.
+            return
+        self._append_tickets(self.repository, new_tickets)
 
     def _queue_refresh(self, ticket: Ticket) -> None:
         self.events.put(("refresh", ticket))
@@ -335,6 +401,11 @@ class TicketShredderApp(tk.Tk):
                 self._connected(cast(Future[Repository], event[1]))
             elif kind == "refresh":
                 self._refresh(cast(Ticket, event[1]))
+            elif kind == "polled":
+                self._polled(
+                    cast(int, event[1]),
+                    cast(Future[list[Ticket]], event[2]),
+                )
             elif kind == "action":
                 self._action_finished(
                     cast(Ticket, event[1]),
@@ -349,5 +420,6 @@ class TicketShredderApp(tk.Tk):
         self.after(50, self._drain_events)
 
     def _close(self) -> None:
+        self._stop_polling()
         self.controller.shutdown()
         self.destroy()

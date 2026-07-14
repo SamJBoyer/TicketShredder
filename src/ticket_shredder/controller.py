@@ -32,6 +32,10 @@ class TicketController:
         self.repository = repository
         return repository
 
+    def poll(self, repository: Repository) -> list[Ticket]:
+        """Discover newly labeled ``auto`` issues without resetting live tickets."""
+        return self.github.poll_new_auto_tickets(repository)
+
     def start(
         self,
         repository: Repository,
