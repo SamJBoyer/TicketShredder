@@ -191,7 +191,9 @@ class GitService:
     def merge(self, repository: Repository, ticket: Ticket) -> str | None:
         if not ticket.branch or not ticket.worktree:
             raise CommandError("This ticket has no worktree to merge.")
-        if run(["git", "status", "--porcelain"], cwd=repository.root):
+        # Ignore untracked files: local runtime data (e.g. TicketsPlease writing
+        # under data/) must not block merges the way a dirty tracked tree would.
+        if run(["git", "status", "--porcelain", "-uno"], cwd=repository.root):
             raise CommandError("The agents checkout has uncommitted changes.")
         run(["git", "checkout", AGENT_BRANCH], cwd=repository.root)
         run(["git", "fetch", "--prune", "origin"], cwd=repository.root, timeout=300)

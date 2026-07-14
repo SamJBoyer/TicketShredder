@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 from ticket_shredder.agent_runner import CursorAgentRunner
 from ticket_shredder.controller import TicketController
-from ticket_shredder.git_service import GitService, remote_identity, repository_name, run
+from ticket_shredder.git_service import (
+    CommandError,
+    GitService,
+    remote_identity,
+    repository_name,
+    run,
+)
 from ticket_shredder.github_service import GitHubService
 from ticket_shredder.model import Repository, Ticket, TicketStatus
 
@@ -289,6 +295,90 @@ class GitServiceCheckoutTests(unittest.TestCase):
             # Merge must have integrated origin/agents (no longer behind).
             behind = _git(["rev-list", "--count", "HEAD..origin/agents"], cwd=clone)
             self.assertEqual(behind, "0")
+
+    def test_merge_allows_untracked_files_in_agents_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            remote = base / "remote.git"
+            run(["git", "init", "--bare", "-b", "agents", str(remote)])
+
+            seed = base / "seed"
+            _init_repo(seed)
+            (seed / "README.md").write_text("base\n", encoding="utf-8")
+            _git(["add", "README.md"], cwd=seed)
+            _git(["commit", "-m", "base"], cwd=seed)
+            _git(["remote", "add", "origin", str(remote)], cwd=seed)
+            _git(["push", "-u", "origin", "agents"], cwd=seed)
+
+            clone = base / "widgets"
+            run(["git", "clone", "--branch", "agents", str(remote), str(clone)])
+            _git(["config", "user.email", "test@example.com"], cwd=clone)
+            _git(["config", "user.name", "Test"], cwd=clone)
+
+            worktree = base / "worktrees" / "widgets" / "1"
+            branch = "ticket-shredder/issue-1"
+            run(
+                ["git", "worktree", "add", "-b", branch, str(worktree), "agents"],
+                cwd=clone,
+            )
+            _git(["config", "user.email", "test@example.com"], cwd=worktree)
+            _git(["config", "user.name", "Test"], cwd=worktree)
+            (worktree / "feature.txt").write_text("done\n", encoding="utf-8")
+            _git(["add", "feature.txt"], cwd=worktree)
+            _git(["commit", "-m", "feature"], cwd=worktree)
+
+            # Runtime untracked files in the agents checkout (e.g. TicketsPlease data/).
+            runtime = clone / "data" / "hprojects"
+            runtime.mkdir(parents=True)
+            (runtime / "hp_local.json").write_text("{}\n", encoding="utf-8")
+
+            ticket = Ticket(
+                1,
+                "Feature",
+                "",
+                "https://example.test/1",
+                branch=branch,
+                worktree=worktree,
+            )
+            repository = Repository(str(remote), clone)
+            service = GitService(base)
+            service.merge(repository, ticket)
+
+            self.assertEqual(_git(["branch", "--show-current"], cwd=clone), "agents")
+            self.assertTrue((clone / "feature.txt").exists())
+            self.assertTrue((runtime / "hp_local.json").exists())
+            self.assertFalse(worktree.exists())
+
+    def test_merge_rejects_tracked_dirty_agents_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            remote = base / "remote.git"
+            run(["git", "init", "--bare", "-b", "agents", str(remote)])
+
+            seed = base / "seed"
+            _init_repo(seed)
+            (seed / "README.md").write_text("base\n", encoding="utf-8")
+            _git(["add", "README.md"], cwd=seed)
+            _git(["commit", "-m", "base"], cwd=seed)
+            _git(["remote", "add", "origin", str(remote)], cwd=seed)
+            _git(["push", "-u", "origin", "agents"], cwd=seed)
+
+            clone = base / "widgets"
+            run(["git", "clone", "--branch", "agents", str(remote), str(clone)])
+            (clone / "README.md").write_text("dirty\n", encoding="utf-8")
+
+            worktree = base / "wt"
+            worktree.mkdir()
+            ticket = Ticket(
+                1,
+                "Feature",
+                "",
+                "https://example.test/1",
+                branch="ticket-shredder/issue-1",
+                worktree=worktree,
+            )
+            with self.assertRaisesRegex(CommandError, "uncommitted changes"):
+                GitService(base).merge(Repository(str(remote), clone), ticket)
 
 
 if __name__ == "__main__":
