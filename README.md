@@ -37,10 +37,12 @@ ticket-shredder-desktop
 
 Paste a Git remote URL and select **Connect**. Ticket Shredder then:
 
-1. validates and clones the repository under `~/.ticket-shredder/repos`;
-2. checks out (or creates) its `dev` branch;
+1. validates and clones the repository under `$CARGO_DIR/.hProjects/<repo>`
+   (requires the `CARGO_DIR` environment variable);
+2. checks out (or creates) its `agents` branch;
 3. syncs open `auto` issues into `.scratch/.itickets/auto`;
-4. creates one branch and Git worktree per issue;
+4. creates one branch and Git worktree per issue under
+   `$CARGO_DIR/.hProjects/worktrees/<repo>/<issue>`;
 5. runs up to three local Cursor agents concurrently; and
 6. marks completed jobs ready for human review.
 

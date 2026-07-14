@@ -83,8 +83,9 @@ class GitService:
 
     def acquire(self, remote_url: str) -> Repository:
         name = repository_name(remote_url)
-        root = self.workspace_root / "repos" / name
-        root.parent.mkdir(parents=True, exist_ok=True)
+        # Clones live directly under the hProjects root (shared with TicketsPlease).
+        root = self.workspace_root / name
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
         if root.exists():
             if not (root / ".git").exists():
                 raise CommandError(f"{root} exists but is not a Git repository.")

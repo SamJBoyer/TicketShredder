@@ -10,6 +10,7 @@ from typing import cast
 
 from .controller import TicketController
 from .model import Repository, Ticket, TicketStatus
+from .paths import hprojects_root
 
 STATUS_COLORS = {
     TicketStatus.QUEUED: "#9ca3af",
@@ -107,9 +108,7 @@ class TicketShredderApp(tk.Tk):
         self.title("Ticket Shredder")
         self.geometry("900x650")
         self.minsize(680, 420)
-        self.controller = TicketController(
-            workspace_root or Path.home() / ".ticket-shredder"
-        )
+        self.controller = TicketController(workspace_root or hprojects_root())
         self.cards: dict[int, TicketCard] = {}
         self.repository: Repository | None = None
         self.events: queue.Queue[tuple[object, ...]] = queue.Queue()
