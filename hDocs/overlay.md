@@ -1,1 +1,1 @@
-This project uses helmsman. 
+This project uses helmsman and the CARGO_DIR directory to stash worktrees. 

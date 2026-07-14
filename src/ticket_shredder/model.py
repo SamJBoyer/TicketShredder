@@ -34,5 +34,13 @@ class Ticket:
 class Repository:
     remote_url: str
     root: Path
+    """Agents worktree — TicketShredder merge target and .scratch home."""
+
+    home: Path | None = None
+    """Project directory under .hProjects/<name>."""
+
+    bare: Path | None = None
+    agents: Path | None = None
+    dev: Path | None = None
     default_branch: str = "agents"
     tickets: list[Ticket] = field(default_factory=list)

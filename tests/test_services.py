@@ -17,6 +17,7 @@ from ticket_shredder.git_service import (
     run,
 )
 from ticket_shredder.github_service import GitHubService
+from ticket_shredder.layout import agents_path, bare_path, dev_path, ticket_path
 from ticket_shredder.model import Repository, Ticket, TicketStatus
 
 
@@ -29,6 +30,21 @@ def _init_repo(path: Path, *, branch: str = "agents") -> None:
     _git(["init", "-b", branch], cwd=path)
     _git(["config", "user.email", "test@example.com"], cwd=path)
     _git(["config", "user.name", "Test"], cwd=path)
+
+
+def _seed_remote(base: Path) -> Path:
+    remote = base / "remote.git"
+    run(["git", "init", "--bare", "-b", "agents", str(remote)])
+    seed = base / "seed"
+    _init_repo(seed)
+    (seed / "README.md").write_text("base\n", encoding="utf-8")
+    _git(["add", "README.md"], cwd=seed)
+    _git(["commit", "-m", "base"], cwd=seed)
+    _git(["branch", "dev"], cwd=seed)
+    _git(["remote", "add", "origin", str(remote)], cwd=seed)
+    _git(["push", "-u", "origin", "agents"], cwd=seed)
+    _git(["push", "-u", "origin", "dev"], cwd=seed)
+    return remote
 
 
 class RepositoryNameTests(unittest.TestCase):
@@ -249,77 +265,82 @@ class TicketControllerCloseTests(unittest.TestCase):
                 controller.shutdown()
 
 
-class GitServiceCheckoutTests(unittest.TestCase):
-    def test_checkout_agents_merges_when_local_and_origin_diverged(self) -> None:
+class GitServiceLayoutTests(unittest.TestCase):
+    def test_acquire_creates_bare_agents_and_dev_worktrees(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
-            remote = base / "remote.git"
-            run(["git", "init", "--bare", "-b", "agents", str(remote)])
+            remote = _seed_remote(base)
+            service = GitService(base / "hprojects")
+            repository = service.acquire(str(remote))
 
-            seed = base / "seed"
-            _init_repo(seed)
-            (seed / "README.md").write_text("base\n", encoding="utf-8")
-            _git(["add", "README.md"], cwd=seed)
-            _git(["commit", "-m", "base"], cwd=seed)
-            _git(["remote", "add", "origin", str(remote)], cwd=seed)
-            _git(["push", "-u", "origin", "agents"], cwd=seed)
+            self.assertTrue(bare_path(repository.home).is_dir())
+            self.assertEqual(
+                _git(["branch", "--show-current"], cwd=repository.agents),
+                "agents",
+            )
+            self.assertEqual(
+                _git(["branch", "--show-current"], cwd=repository.dev),
+                "dev",
+            )
+            self.assertEqual(repository.root, repository.agents)
 
-            clone = base / "repos" / "widgets"
-            run(["git", "clone", "--branch", "agents", str(remote), str(clone)])
-            _git(["config", "user.email", "test@example.com"], cwd=clone)
-            _git(["config", "user.name", "Test"], cwd=clone)
-
-            # Divergent local commit (simulates a ticket merge that never pushed).
-            (clone / "local.txt").write_text("local\n", encoding="utf-8")
-            _git(["add", "local.txt"], cwd=clone)
-            _git(["commit", "-m", "local-only"], cwd=clone)
-
-            # Divergent remote commit.
-            other = base / "other"
-            run(["git", "clone", "--branch", "agents", str(remote), str(other)])
-            _git(["config", "user.email", "test@example.com"], cwd=other)
-            _git(["config", "user.name", "Test"], cwd=other)
-            (other / "remote.txt").write_text("remote\n", encoding="utf-8")
-            _git(["add", "remote.txt"], cwd=other)
-            _git(["commit", "-m", "remote-only"], cwd=other)
-            _git(["push", "origin", "agents"], cwd=other)
-
-            service = GitService(base)
-            run(["git", "fetch", "--prune", "origin"], cwd=clone)
-            service._checkout_agents(clone)
-
-            self.assertEqual(_git(["branch", "--show-current"], cwd=clone), "agents")
-            files = {path.name for path in clone.iterdir() if path.is_file()}
-            self.assertIn("local.txt", files)
-            self.assertIn("remote.txt", files)
-            # Merge must have integrated origin/agents (no longer behind).
-            behind = _git(["rev-list", "--count", "HEAD..origin/agents"], cwd=clone)
-            self.assertEqual(behind, "0")
-
-    def test_merge_allows_untracked_files_in_agents_checkout(self) -> None:
+    def test_acquire_migrates_legacy_clone_and_preserves_ticket_branch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
-            remote = base / "remote.git"
-            run(["git", "init", "--bare", "-b", "agents", str(remote)])
+            remote = _seed_remote(base)
+            hprojects = base / "hprojects"
+            # Folder name must match repository_name(remote) so acquire migrates
+            # this clone instead of creating a second project directory.
+            legacy = hprojects / repository_name(str(remote))
+            run(["git", "clone", "--branch", "agents", str(remote), str(legacy)])
+            _git(["config", "user.email", "test@example.com"], cwd=legacy)
+            _git(["config", "user.name", "Test"], cwd=legacy)
 
-            seed = base / "seed"
-            _init_repo(seed)
-            (seed / "README.md").write_text("base\n", encoding="utf-8")
-            _git(["add", "README.md"], cwd=seed)
-            _git(["commit", "-m", "base"], cwd=seed)
-            _git(["remote", "add", "origin", str(remote)], cwd=seed)
-            _git(["push", "-u", "origin", "agents"], cwd=seed)
+            # Dirty tracked edit on agents (the chronic merge blocker).
+            (legacy / "README.md").write_text("human edit\n", encoding="utf-8")
 
-            clone = base / "widgets"
-            run(["git", "clone", "--branch", "agents", str(remote), str(clone)])
-            _git(["config", "user.email", "test@example.com"], cwd=clone)
-            _git(["config", "user.name", "Test"], cwd=clone)
-
-            worktree = base / "worktrees" / "widgets" / "1"
+            ticket_wt = hprojects / "worktrees" / legacy.name / "1"
             branch = "ticket-shredder/issue-1"
             run(
-                ["git", "worktree", "add", "-b", branch, str(worktree), "agents"],
-                cwd=clone,
+                ["git", "worktree", "add", "-b", branch, str(ticket_wt), "agents"],
+                cwd=legacy,
+            )
+            _git(["config", "user.email", "test@example.com"], cwd=ticket_wt)
+            _git(["config", "user.name", "Test"], cwd=ticket_wt)
+            (ticket_wt / "feature.txt").write_text("done\n", encoding="utf-8")
+            _git(["add", "feature.txt"], cwd=ticket_wt)
+            _git(["commit", "-m", "feature"], cwd=ticket_wt)
+
+            service = GitService(hprojects)
+            repository = service.acquire(str(remote))
+
+            self.assertTrue(bare_path(repository.home).is_dir())
+            self.assertFalse((legacy / ".git").exists())
+            self.assertEqual(
+                _git(["branch", "--show-current"], cwd=repository.agents),
+                "agents",
+            )
+            # Human edit should land on dev, leaving agents clean.
+            agents_dirty = _git(["status", "--porcelain", "-uno"], cwd=repository.agents)
+            self.assertEqual(agents_dirty, "")
+            self.assertIn(
+                "human edit",
+                (repository.dev / "README.md").read_text(encoding="utf-8"),
+            )
+            reattached = ticket_path(repository.home, 1)
+            self.assertTrue(reattached.exists())
+            self.assertTrue((reattached / "feature.txt").exists())
+
+    def test_merge_into_agents_worktree_allows_untracked_and_cleans_ticket(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            remote = _seed_remote(base)
+            service = GitService(base / "hprojects")
+            repository = service.acquire(str(remote))
+
+            branch, worktree = service.create_worktree(
+                repository,
+                Ticket(1, "Feature", "", "https://example.test/1"),
             )
             _git(["config", "user.email", "test@example.com"], cwd=worktree)
             _git(["config", "user.name", "Test"], cwd=worktree)
@@ -327,8 +348,7 @@ class GitServiceCheckoutTests(unittest.TestCase):
             _git(["add", "feature.txt"], cwd=worktree)
             _git(["commit", "-m", "feature"], cwd=worktree)
 
-            # Runtime untracked files in the agents checkout (e.g. TicketsPlease data/).
-            runtime = clone / "data" / "hprojects"
+            runtime = repository.agents / "data" / "hprojects"
             runtime.mkdir(parents=True)
             (runtime / "hp_local.json").write_text("{}\n", encoding="utf-8")
 
@@ -340,35 +360,22 @@ class GitServiceCheckoutTests(unittest.TestCase):
                 branch=branch,
                 worktree=worktree,
             )
-            repository = Repository(str(remote), clone)
-            service = GitService(base)
             service.merge(repository, ticket)
 
-            self.assertEqual(_git(["branch", "--show-current"], cwd=clone), "agents")
-            self.assertTrue((clone / "feature.txt").exists())
+            self.assertTrue((repository.agents / "feature.txt").exists())
             self.assertTrue((runtime / "hp_local.json").exists())
             self.assertFalse(worktree.exists())
 
-    def test_merge_rejects_tracked_dirty_agents_checkout(self) -> None:
+    def test_merge_rejects_tracked_dirty_agents_worktree_with_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
-            remote = base / "remote.git"
-            run(["git", "init", "--bare", "-b", "agents", str(remote)])
+            remote = _seed_remote(base)
+            service = GitService(base / "hprojects")
+            repository = service.acquire(str(remote))
+            (repository.agents / "README.md").write_text("dirty\n", encoding="utf-8")
 
-            seed = base / "seed"
-            _init_repo(seed)
-            (seed / "README.md").write_text("base\n", encoding="utf-8")
-            _git(["add", "README.md"], cwd=seed)
-            _git(["commit", "-m", "base"], cwd=seed)
-            _git(["remote", "add", "origin", str(remote)], cwd=seed)
-            _git(["push", "-u", "origin", "agents"], cwd=seed)
-
-            clone = base / "widgets"
-            run(["git", "clone", "--branch", "agents", str(remote), str(clone)])
-            (clone / "README.md").write_text("dirty\n", encoding="utf-8")
-
-            worktree = base / "wt"
-            worktree.mkdir()
+            worktree = ticket_path(repository.home, 1)
+            worktree.mkdir(parents=True)
             ticket = Ticket(
                 1,
                 "Feature",
@@ -377,8 +384,40 @@ class GitServiceCheckoutTests(unittest.TestCase):
                 branch="ticket-shredder/issue-1",
                 worktree=worktree,
             )
-            with self.assertRaisesRegex(CommandError, "uncommitted changes"):
-                GitService(base).merge(Repository(str(remote), clone), ticket)
+            with self.assertRaisesRegex(CommandError, "README.md"):
+                service.merge(repository, ticket)
+
+    def test_sync_agents_merges_when_local_and_origin_diverged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            remote = _seed_remote(base)
+            service = GitService(base / "hprojects")
+            repository = service.acquire(str(remote))
+            agents = repository.agents
+            _git(["config", "user.email", "test@example.com"], cwd=agents)
+            _git(["config", "user.name", "Test"], cwd=agents)
+
+            (agents / "local.txt").write_text("local\n", encoding="utf-8")
+            _git(["add", "local.txt"], cwd=agents)
+            _git(["commit", "-m", "local-only"], cwd=agents)
+
+            other = base / "other"
+            run(["git", "clone", "--branch", "agents", str(remote), str(other)])
+            _git(["config", "user.email", "test@example.com"], cwd=other)
+            _git(["config", "user.name", "Test"], cwd=other)
+            (other / "remote.txt").write_text("remote\n", encoding="utf-8")
+            _git(["add", "remote.txt"], cwd=other)
+            _git(["commit", "-m", "remote-only"], cwd=other)
+            _git(["push", "origin", "agents"], cwd=other)
+
+            run(["git", "fetch", "--prune", "origin"], cwd=agents)
+            service._sync_agents_from_origin(agents)
+
+            files = {path.name for path in agents.iterdir() if path.is_file()}
+            self.assertIn("local.txt", files)
+            self.assertIn("remote.txt", files)
+            behind = _git(["rev-list", "--count", "HEAD..origin/agents"], cwd=agents)
+            self.assertEqual(behind, "0")
 
 
 if __name__ == "__main__":
