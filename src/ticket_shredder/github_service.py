@@ -9,6 +9,36 @@ from .model import Repository, Ticket, TicketStatus
 
 class GitHubService:
     def sync_auto_tickets(self, repository: Repository) -> list[Ticket]:
+        tickets = self._list_auto_tickets(repository)
+        self._write_cache(repository.root, tickets)
+        for ticket in tickets:
+            self._restore_state(repository.root, ticket)
+        repository.tickets = tickets
+        return tickets
+
+    def poll_new_auto_tickets(self, repository: Repository) -> list[Ticket]:
+        """Fetch open ``auto`` issues and append any not already tracked.
+
+        Existing in-memory ``Ticket`` objects are preserved so a live agent
+        run is not replaced or marked interrupted by a poll.
+        """
+        remote = self._list_auto_tickets(repository)
+        self._write_cache(repository.root, remote)
+        known = {ticket.number for ticket in repository.tickets}
+        new_tickets: list[Ticket] = []
+        for ticket in remote:
+            if ticket.number in known:
+                continue
+            self._restore_state(repository.root, ticket)
+            new_tickets.append(ticket)
+        if new_tickets:
+            repository.tickets = sorted(
+                [*repository.tickets, *new_tickets],
+                key=lambda ticket: ticket.number,
+            )
+        return new_tickets
+
+    def _list_auto_tickets(self, repository: Repository) -> list[Ticket]:
         raw = run(
             [
                 "gh",
@@ -33,10 +63,6 @@ class GitHubService:
 
         tickets = [self._ticket_from_json(item) for item in payload]
         tickets.sort(key=lambda ticket: ticket.number)
-        self._write_cache(repository.root, tickets)
-        for ticket in tickets:
-            self._restore_state(repository.root, ticket)
-        repository.tickets = tickets
         return tickets
 
     def close_issue(self, repository: Repository, ticket: Ticket) -> None:

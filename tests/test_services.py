@@ -173,6 +173,74 @@ class GitHubServiceTests(unittest.TestCase):
             self.assertEqual(restored.branch, "ticket-shredder/issue-7")
             self.assertEqual(restored.worktree, worktree)
 
+    def test_poll_adds_only_new_tickets_preserving_live_objects(self) -> None:
+        payload = [
+            {
+                "number": 1,
+                "title": "Already tracked",
+                "body": "updated body",
+                "url": "https://example.test/1",
+                "labels": [{"name": "auto"}],
+            },
+            {
+                "number": 2,
+                "title": "Brand new",
+                "body": "fresh",
+                "url": "https://example.test/2",
+                "labels": [{"name": "auto"}],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = Ticket(
+                1,
+                "Already tracked",
+                "original",
+                "https://example.test/1",
+                status=TicketStatus.WORKING,
+                detail="Cursor is implementing the ticket.",
+            )
+            repository = Repository("remote", root, tickets=[existing])
+
+            with patch(
+                "ticket_shredder.github_service.run",
+                return_value=json.dumps(payload),
+            ):
+                new_tickets = GitHubService().poll_new_auto_tickets(repository)
+
+            self.assertEqual([ticket.number for ticket in new_tickets], [2])
+            self.assertIs(repository.tickets[0], existing)
+            self.assertEqual(existing.status, TicketStatus.WORKING)
+            self.assertEqual(existing.body, "original")
+            self.assertEqual(repository.tickets[1].number, 2)
+            self.assertEqual(repository.tickets[1].status, TicketStatus.QUEUED)
+            cached = (root / ".scratch" / ".itickets" / "auto" / "2.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("# #2: Brand new", cached)
+
+    def test_poll_returns_empty_when_no_new_tickets(self) -> None:
+        payload = [
+            {
+                "number": 1,
+                "title": "Same",
+                "body": "",
+                "url": "https://example.test/1",
+                "labels": [{"name": "auto"}],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = Ticket(1, "Same", "", "https://example.test/1")
+            repository = Repository("remote", root, tickets=[existing])
+            with patch(
+                "ticket_shredder.github_service.run",
+                return_value=json.dumps(payload),
+            ):
+                new_tickets = GitHubService().poll_new_auto_tickets(repository)
+            self.assertEqual(new_tickets, [])
+            self.assertEqual(repository.tickets, [existing])
+
     def test_close_issue_invokes_gh(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -261,6 +329,27 @@ class TicketControllerCloseTests(unittest.TestCase):
             try:
                 with self.assertRaisesRegex(RuntimeError, "still being worked"):
                     controller.close(repository, ticket)
+            finally:
+                controller.shutdown()
+
+
+class TicketControllerPollTests(unittest.TestCase):
+    def test_poll_delegates_to_github_service(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = Ticket(1, "Old", "", "https://example.test/1")
+            fresh = Ticket(2, "New", "", "https://example.test/2")
+            repository = Repository("remote", root, tickets=[existing])
+            controller = TicketController(root)
+            try:
+                with patch.object(
+                    controller.github,
+                    "poll_new_auto_tickets",
+                    return_value=[fresh],
+                ) as poll:
+                    added = controller.poll(repository)
+                poll.assert_called_once_with(repository)
+                self.assertEqual(added, [fresh])
             finally:
                 controller.shutdown()
 
