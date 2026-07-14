@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .git_service import CommandError, run
 from .model import Ticket
+from .windows_console import launch_bridge_command, suppress_console_windows
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,10 +76,16 @@ Requirements:
 
         prompt = self.build_prompt(ticket)
         local = LocalAgentOptions(cwd=str(worktree))
-        async with await AsyncClient.launch_bridge(
-            workspace=worktree,
-            local=local,
-        ) as client:
+        # On Windows the SDK's default .cmd launcher opens a blank console;
+        # closing it kills the bridge. Prefer node.exe directly and apply
+        # CREATE_NO_WINDOW while the helper process starts.
+        with suppress_console_windows():
+            bridge_client = await AsyncClient.launch_bridge(
+                command=launch_bridge_command(),
+                workspace=worktree,
+                local=local,
+            )
+        async with bridge_client as client:
             async with await client.create_agent(
                 model=self.model,
                 api_key=api_key,
